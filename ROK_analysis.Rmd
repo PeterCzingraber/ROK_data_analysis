@@ -1,0 +1,112 @@
+---
+title: "ROK_data_analysis"
+author: "Peter Czingraber"
+date: "2026-09-16"
+output: html_document
+---
+
+## Loading packages
+
+```{r setup, message=FALSE, warning=FALSE}
+library(tidyverse)
+```
+
+---
+
+## Importing raw data
+
+```{r}
+raw_pilot_data = read.csv("inlab_pilot.csv")
+```
+
+---
+
+## Data cleaning
+
+```{r}
+demography_data = raw_pilot_data %>%
+  filter(trial_type %in% c("survey-html-form", "survey-multi-choice")) %>%
+  select(participant, response) %>%
+  mutate(
+    gender = str_extract(response, '(?<=[Gg]ender":")[^"]+'),
+    age = as.numeric(str_extract(response, '(?<="response":")\\d{1,3}(?=")'))
+    ) %>%
+  select(-response) %>%
+  group_by(participant) %>%
+  summarize(
+    age    = age[!is.na(age)][1],
+    gender = gender[!is.na(gender)][1],
+    .groups = "drop"
+  )
+
+demography_data %>%
+  summarise(mean_age = mean(age, na.rm = TRUE),
+            n_female = sum(gender == "Nő", na.rm = TRUE))
+```
+
+---
+
+## Flagging and filtering practice trials 
+
+```{r}
+raw_pilot_data = raw_pilot_data %>% 
+  group_by(participant) %>% 
+  mutate(
+    block_marker = str_detect(stimulus, regex("blokk\\s+vége", ignore_case = TRUE)) %>% 
+      coalesce(FALSE),
+    block_start  = str_detect(stimulus, regex("Blokk\\s+kezdődik", ignore_case = TRUE)) %>% 
+      coalesce(FALSE),
+    first_trial  = as.integer(lag(block_start, n = 2, default = FALSE)),
+    marker_seen  = cummax(block_marker),
+    trial_exp    = if_else(marker_seen == 0, "practice", "experimental")
+  ) %>% 
+  ungroup() %>% 
+filter(task == "expTrial")
+# task == "expTrial" only drops non-trial rows (consent, demographics, etc.);
+# trial_exp (from the "blokk vége" marker, computed pre-filter) is what actually separates practice from experimental trials.
+raw_pilot_data = raw_pilot_data %>% 
+  filter(trial_exp == "experimental") %>% 
+  filter(rt > 0) # the plugin encodes "too slow!" responses with an rt of -1 ms. This is not interpretable, therefore we filter them out. 
+```
+
+---
+
+## Keeping the necessary variables
+
+```{r}
+raw_pilot_data = raw_pilot_data %>% 
+  select(participant, rt, key_press, correct, congruency, trial_exp)
+```
+
+---
+
+## Flagging previous trials
+
+```{r}
+raw_pilot_data = raw_pilot_data %>%
+  mutate(prev_congruency = lag(congruency, n = 1),
+         prev_correct = lag(correct, n = 1),
+         first_trial = ifelse(lag(str_detect(stimulus, "Blokk \\d+ kezdődik"), 4) == TRUE, 1, 0),
+         rt = as.numeric(rt))
+```
+
+---
+
+## Flagging diagnostic trials
+
+```{r}
+raw_pilot_data = raw_pilot_data %>%
+  filter(task %in% c("probe", "valence_check", "arousal_check"), trial_exp == "experimental") %>%
+  group_by(subj_code) %>%
+  mutate(trial_role = if_else(monetary == 1, "inducer", "diagnostic")) %>%
+  ungroup()
+```
+
+
+
+
+
+
+
+
+
