@@ -1,0 +1,275 @@
+# =============================================================================
+# Prime Digit Flanker: Congruency Sequence Effects Analysis
+# Translated from MATLAB to R
+# =============================================================================
+#
+# NOTE ON COLUMN LAYOUT
+# ----------------------
+# The original MATLAB header comment describes only 12 columns, but the code
+# itself indexes up to column 17 (e.g. data(:,13), data(:,14), data(:,15),
+# data(:,17)) *before* the "Warmup" column is appended. That means the raw text files actually have 16 columns, not 12 -- the comment block was out of
+# date relative to the code. I've preserved the same column *positions* used
+# in the MATLAB script (via the COL_* constants below) rather than guessing
+# at the meaning of the columns the script never touches (8-11, 16). Please
+# double-check COL_CURR_CONG / COL_PREV_CONG / COL_PREV_CONG2 / COL_RT /
+# COL_ACC / COL_PREV_ACC / COL_PREV_ACC2 against your actual file if results look off.
+#
+# Column roles actually used by the MATLAB script (1-indexed, matching R):
+#   V1  = Run label ("practice", 1-8)      <- used to strip practice trials
+#   V2  = Trial number (1-96)               <- used to flag Warmup (1-4) vs Real
+#   V5  = Congruency of trial N             ("Congruent"/"Incongruent")
+#   V6  = Congruency of trial N-1
+#   V7  = Congruency of trial N-2
+#   V12 = RT
+#   V13 = Accuracy of trial N               ("Correct"/"Error"/"Omission")
+#   V14 = Accuracy of trial N-1
+#   V15 = Accuracy of trial N-2
+# (V3, V4, V8-V11, V16 exist in the file but are never referenced by the
+#  original script, so they're read in but otherwise unused here too.)
+#
+# OUTPUT
+# ------
+# Writes one row per subject to
+#   Prime_Digit_Flanker_Results_Lab_Exclude_Trials_1_4.txt
+# with the same 23 columns as the MATLAB version:
+#   SubNum, 8 trimmed-mean RTs, 8 percent-correct values, 4 trimmed RT SDs,
+#   Overall_Accuracy, Total_Percent_Outliers
+# =============================================================================
+
+# ---- Column position constants (see note above) ----------------------------
+```{r}
+COL_RUN         <- 1
+COL_TRIAL       <- 2
+COL_CURR_CONG   <- 5
+COL_PREV_CONG   <- 6
+COL_PREV_CONG2  <- 7
+COL_RT          <- 12
+COL_ACC         <- 13
+COL_PREV_ACC    <- 14
+COL_PREV_ACC2   <- 15
+```
+
+# ---- Helper: trim values more than 3 SD from the mean (both directions) ----
+```{r}
+trim_3sd <- function(x) {
+  m <- mean(x, na.rm = TRUE)
+  s <- stats::sd(x, na.rm = TRUE)
+  keep <- !is.na(x) & x >= (m - 3 * s) & x <= (m + 3 * s)
+  list(
+    trimmed     = x[keep],
+    n_outliers  = sum(!keep, na.rm = TRUE)
+  )
+}
+```
+
+
+# ---- Helper: pull the subset of rows matching a congruency-sequence pattern
+# cur/prev/prev2 are "Congruent"/"Incongruent" for trials N, N-1, N-2.
+# acc_cols is a named list of which accuracy columns must equal "Correct",
+# e.g. list(curr = TRUE, prev = TRUE, prev2 = TRUE) or list(prev = TRUE, prev2 = TRUE).
+```{r}
+get_condition <- function(df, cur, prev, prev2,
+                           require_curr_correct = FALSE,
+                           require_prev_correct = TRUE,
+                           require_prev2_correct = TRUE) {
+  keep <- df[[COL_CURR_CONG]]  == cur  &
+          df[[COL_PREV_CONG]]  == prev &
+          df[[COL_PREV_CONG2]] == prev2 &
+          df$Warmup == "Real"
+
+  if (require_curr_correct)  keep <- keep & df[[COL_ACC]]       == "Correct"
+  if (require_prev_correct)  keep <- keep & df[[COL_PREV_ACC]]  == "Correct"
+  if (require_prev2_correct) keep <- keep & df[[COL_PREV_ACC2]] == "Correct"
+
+  df[keep, , drop = FALSE]
+}
+```
+
+
+# ---- Process one subject's file --------------------------------------------
+```{r}
+process_subject_file <- function(file_name) {
+
+  sub_num <- as.numeric(regmatches(
+    file_name,
+    regexpr("(?<=Prime_Digit_Flanker_Subject_)[0-9]+", file_name, perl = TRUE)
+  ))
+
+  # Read as raw text/character columns, no header, tab-delimited
+  raw <- read.delim(file_name, header = FALSE, sep = "\t",
+                     colClasses = "character", quote = "\"",
+                     stringsAsFactors = FALSE)
+
+  # ---- Strip practice trials --------------------------------------------
+  practice_rows <- which(raw[[COL_RUN]] == "practice")
+  first_test_trial <- max(practice_rows) + 1
+  data <- raw[first_test_trial:nrow(raw), , drop = FALSE]
+
+  # ---- Flag Warmup (trials 1-4 of each block) vs Real (5-68) -------------
+  data$Warmup <- ifelse(data[[COL_TRIAL]] %in% c("1", "2", "3", "4"),
+                         "Warmup", "Real")
+
+  # Numeric RT column
+  data$RT <- suppressWarnings(as.numeric(data[[COL_RT]]))
+
+  # =========================================================================
+  # I. Congruency sequence effects in RT (correct trials preceded by
+  #    two correct trials)
+  # =========================================================================
+  # "_rep" = trial N-2 was Incongruent; "_alt" = trial N-2 was Congruent
+  cond_specs_I <- list(
+    iI_rep = c("Incongruent", "Incongruent", "Incongruent"),
+    cI_rep = c("Incongruent", "Congruent",   "Incongruent"),
+    cC_rep = c("Congruent",   "Congruent",   "Incongruent"),
+    iC_rep = c("Congruent",   "Incongruent", "Incongruent"),
+    iI_alt = c("Incongruent", "Incongruent", "Congruent"),
+    cI_alt = c("Incongruent", "Congruent",   "Congruent"),
+    cC_alt = c("Congruent",   "Congruent",   "Congruent"),
+    iC_alt = c("Congruent",   "Incongruent", "Congruent")
+  )
+
+  rt_trimmed <- list()
+  n_outliers <- list()
+
+  for (nm in names(cond_specs_I)) {
+    spec <- cond_specs_I[[nm]]
+    sub  <- get_condition(data, spec[1], spec[2], spec[3],
+                           require_curr_correct = TRUE,
+                           require_prev_correct = TRUE,
+                           require_prev2_correct = TRUE)
+    tr <- trim_3sd(sub$RT)
+    rt_trimmed[[nm]] <- tr$trimmed
+    n_outliers[[nm]] <- tr$n_outliers
+  }
+
+  mean_rt <- vapply(rt_trimmed, function(x) mean(x, na.rm = TRUE), numeric(1))
+
+  # Combined SDs across matched "rep"/"alt" x I/C groupings
+  std_I_rep <- stats::sd(c(rt_trimmed$iI_rep, rt_trimmed$cI_rep), na.rm = TRUE)
+  std_C_rep <- stats::sd(c(rt_trimmed$cC_rep, rt_trimmed$iC_rep), na.rm = TRUE)
+  std_I_alt <- stats::sd(c(rt_trimmed$iI_alt, rt_trimmed$cI_alt), na.rm = TRUE)
+  std_C_alt <- stats::sd(c(rt_trimmed$cC_alt, rt_trimmed$iC_alt), na.rm = TRUE)
+
+  total_num_outliers   <- sum(unlist(n_outliers))
+  total_percent_outliers <- total_num_outliers / nrow(data)
+
+  # =========================================================================
+  # II. Congruency sequence effects in accuracy
+  #     (Method B in the original script: exclude omissions, then exclude
+  #      RT outliers > 3 SD, then compute percent correct on what remains.
+  #      This is the version whose numbers are actually written to file --
+  #      the MATLAB "Method A", which skips the omission/outlier exclusion,
+  #      is computed there too but never written out, so it's omitted here.)
+  # =========================================================================
+  pc <- list()
+
+  for (nm in names(cond_specs_I)) {
+    spec <- cond_specs_I[[nm]]
+    sub  <- get_condition(data, spec[1], spec[2], spec[3],
+                           require_curr_correct = FALSE,
+                           require_prev_correct = TRUE,
+                           require_prev2_correct = TRUE)
+
+    # Exclude omissions
+    sub <- sub[sub[[COL_ACC]] != "Omission", , drop = FALSE]
+
+    # Exclude RT outliers > 3 SD from that condition's own mean
+    m <- mean(sub$RT, na.rm = TRUE)
+    s <- stats::sd(sub$RT, na.rm = TRUE)
+    kept <- sub[!is.na(sub$RT) & sub$RT >= (m - 3 * s) & sub$RT <= (m + 3 * s), ,
+                drop = FALSE]
+
+    pc[[nm]] <- if (nro[118;1:3uw(kept) > 0) mean(kept[[COL_ACC]] == "Correct") else NA_real_
+  }
+
+  # =========================================================================
+  # III. Overall accuracy (Method C): correct trials / all test trials
+  # =========================================================================
+  overall_accuracy <- mean(data[[COL_ACC]] == "Correct")
+
+  # ---- Assemble this subject's output row (same column order as MATLAB) --
+  data.frame(
+    SubNum   = sub_num,
+    ccC_RT   = mean_rt["cC_alt"],
+    ccI_RT   = mean_rt["cI_alt"],
+    ciC_RT   = mean_rt["iC_alt"],
+    ciI_RT   = mean_rt["iI_alt"],
+    icC_RT   = mean_rt["cC_rep"],
+    icI_RT   = mean_rt["cI_rep"],
+    iiC_RT   = mean_rt["iC_rep"],
+    iiI_RT   = mean_rt["iI_rep"],
+    ccC_PC   = pc$cC_alt,
+    ccI_PC   = pc$cI_alt,
+    ciC_PC   = pc$iC_alt,
+    ciI_PC   = pc$iI_alt,
+    icC_PC   = pc$cC_rep,
+    icI_PC   = pc$cI_rep,
+    iiC_PC   = pc$iC_rep,
+    iiI_PC   = pc$iI_rep,
+    std_I_rep_RT = std_I_rep,
+    std_C_rep_RT = std_C_rep,
+    std_I_alt_RT = std_I_alt,
+    std_C_alt_RT = std_C_alt,
+    Overall_Accuracy       = overall_accuracy,
+    Total_Percent_Outliers = total_percent_outliers,
+    row.names = NULL
+  )
+}
+```
+
+
+# =============================================================================
+# Main: loop over all subject files, write combined results file
+# =============================================================================
+```{r}
+run_all_subjects <- function(
+    dir_path   = ".",
+    out_file   = "Prime_Digit_Flanker_Results_Lab_Exclude_Trials_1_4.txt"
+) {
+  files <- list.files(dir_path,
+                       pattern = "^Prime_Digit_Flanker_Subject_.*\\.txt$",
+                       full.names = TRUE)
+
+  if (length(files) == 0) {
+    stop("No files matching 'Prime_Digit_Flanker_Subject_*.txt' found in ", dir_path)
+  }
+
+  # Delete any pre-existing results file, matching the MATLAB script's behavior
+  out_path <- file.path(dir_path, out_file)
+  if (file.exists(out_path)) file.remove(out_path)
+
+  results <- do.call(rbind, lapply(files, process_subject_file))
+
+  # Header block matching the MATLAB output format
+  header_lines <- c(
+    "Experiment ID\t Prime_Digit_Flanker_Results",
+    "The data from each subject appear on a different row",
+    "Data come from the following conditions",
+    "",
+    "Overall Analysis",
+    "\tRT\t\t\t\t\t\t\t\t PC\t\t\t\t\t\t\t\t Stdev\t\t\t\t Overall_Accuracy",
+    paste(
+      "SubNum", "ccC_RT", "ccI_RT", "ciC_RT", "ciI_RT",
+      "icC_RT", "icI_RT", "iiC_RT", "iiI_RT",
+      "ccC_PC", "ccI_PC", "ciC_PC", "ciI_PC",
+      "icC_PC", "icI_PC", "iiC_PC", "iiI_PC",
+      "std_I_rep_RT", "std_C_rep_RT", "std_I_alt_RT", "std_C_alt_RT",
+      "Overall_Accuracy", "Total_Percent_Outliers",
+      sep = "\t"
+    )
+  )
+
+  con <- file(out_path, open = "w")
+  writeLines(header_lines, con)
+  close(con)
+
+  write.table(results, out_path, sep = "\t", row.names = FALSE, col.names = FALSE,
+              append = TRUE, quote = FALSE)
+
+  invisible(results)
+}
+```
+
+
+# Example usage:
+# results <- run_all_subjects(dir_path = "path/to/your/data")
