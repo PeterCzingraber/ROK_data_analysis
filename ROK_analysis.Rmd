@@ -312,15 +312,88 @@ main_effect_df = rm_data %>%
   summarise(rt = mean(mean_rt), .groups = "drop") %>%
   pivot_wider(names_from = congruency, values_from = rt)
 
-t_test_CE = t.test(main_effect_df$incongruent, main_effect_df$congruent, paired = TRUE)
+t_test_CE = t.test(main_effect_df$incongruent, main_effect_df$congruent, paired = TRUE, alternative = "greater")
 t_test_CE
 
 # Post-hoc: CSE (interaction), direction + significance
-t_test_CSE = t.test(subject_cse$CSE, mu = 0)
+t_test_CSE = t.test(subject_cse$CSE, mu = 0, alternative = "greater")
 t_test_CSE
 ```
 
+---
 
+## Bayesian inference using Dienes's bayes factor function
+
+### Use the t_test_CE object which stores the H1 test parameters, then calculate the BF with robustness regions.
+
+```{r}
+t_test_CE
+source("dienes_bayes.R")
+Bf_h1 = old_Bf(sd = t_test_CE$stderr,
+   obtained = t_test_CE$estimate,
+   dfdata = t_test_CE$parameter,
+   meanoftheory = 0,
+   sdtheory = 30,
+   dftheory = 10^10,
+   tail = 1)
+print(Bf_h1)
+
+h1_range = seq(from = 0.5,to = 200,by = 0.5) # Grid starts at 0.5 rather than 0, because old_Bf divides by sdtheory and returns NaN at 0. 
+range_test = t(sapply(h1_range, function(sdi) {
+  bf_val = old_Bf(
+    sd = t_test_CE$stderr,
+    obtained = t_test_CE$estimate,
+    dfdata = t_test_CE$parameter,
+    meanoftheory = 0,
+    sdtheory = sdi,
+    dftheory = 10^10,
+    tail = 1)
+  c(sdtheory = sdi, BF = bf_val)
+  })) 
+
+colnames(range_test) = c ("sdtheory", "BF")
+
+ev_for_h1 = subset(data.frame(range_test), BF > 3)
+low_threshold_mcm = min(ev_for_h1$sdtheory)
+high_threshold_mcm = max(ev_for_h1$sdtheory)
+print(range_test)
+```
+
+---
+
+### Use the t_test_CSE object which stores the H2 test parameters, then calculate the BF with robustness regions.
+
+```{r}
+t_test_CSE
+Bf_h2 = old_Bf(sd = t_test_CSE$stderr,
+   obtained = t_test_CSE$estimate,
+   dfdata = t_test_CSE$parameter,
+   meanoftheory = 0,
+   sdtheory = 30,
+   dftheory = 10^10,
+   tail = 1)
+print(Bf_h2)
+
+h2_range = seq(from = 0.5,to = 200,by = 0.5) 
+range_test = t(sapply(h2_range, function(sdi) {
+  bf_val = old_Bf(
+    sd = t_test_CSE$stderr,
+    obtained = t_test_CSE$estimate,
+    dfdata = t_test_CSE$parameter,
+    meanoftheory = 0,
+    sdtheory = sdi,
+    dftheory = 10^10,
+    tail = 1)
+  c(sdtheory = sdi, BF = bf_val)
+  })) 
+
+colnames(range_test) = c ("sdtheory", "BF")
+
+ev_for_h2 = subset(data.frame(range_test), BF > 3)
+low_threshold_mcm = min(ev_for_h2$sdtheory)
+high_threshold_mcm = max(ev_for_h2$sdtheory)
+print(range_test)
+```
 
 
 
