@@ -89,11 +89,17 @@ raw_pilot_data = raw_pilot_data %>%
          correct = ifelse(correct == "true", 1, 0),
          prev_correct = ifelse(prev_correct == "true", 1, 0),
          rt = as.numeric(rt))
+
+# Additional previous-trial variables, needed for the RT-speed analysis
+raw_pilot_data = raw_pilot_data %>%
+  mutate(prev_rt = lag(rt, n = 1),
+         # accuracy of trial N-2; if N-1 is the first trial of a block, N-2 does not exist in the block -> treated as correct
+         prev2_correct = if_else(lag(first_trial, n = 1) == 1, 1, lag(correct, n = 2)))
 ```
 
 ---
 
-## Filtering participants with accuracy below 60% 
+## Filtering participants with accuracy below 70% 
 
 ```{r}
 accuracy = raw_pilot_data %>%
@@ -110,12 +116,15 @@ raw_pilot_data = raw_pilot_data %>%
 ## Keeping correct trials only, excluding first trials of each block, and participants who did not finish the experiment under 40 minutes (> 2.400.000 ms) 
 
 ```{r}
-filtered_pilot_data = raw_pilot_data %>%
+# Trial-level data (all experimental trials of the retained participants); the RT-speed data frame is built from this
+trial_level_data = raw_pilot_data %>%
   mutate(time_elapsed = as.numeric(time_elapsed)) %>% 
   group_by(participant) %>% 
   mutate(total_time = max(time_elapsed, na.rm = TRUE)) %>% 
   ungroup() %>% 
-  filter(total_time <= 2400000) %>% 
+  filter(total_time <= 2400000)
+
+filtered_pilot_data = trial_level_data %>% 
   filter(correct == 1, prev_correct == 1, rt >= 150, first_trial == 0)
 ```
 
@@ -123,12 +132,32 @@ filtered_pilot_data = raw_pilot_data %>%
 
 ## Omitting the remaining unnecessary variables
 
-
 ```{r}
 processed_pilot_data = filtered_pilot_data %>%
   select(participant, rt, correct, prev_correct, congruency, prev_congruency)
 ```
 
+---
+
+## Data frame for the RT-speed analysis
+
+```{r}
+# One row = trial N together with its previous trial (N-1). Rows are kept if the PREVIOUS trial is valid
+# (correct, rt >= 150, and not itself the first trial after an error), regardless of whether trial N is correct:
+# the fast/slow tertiles are defined on the previous trials only, so they must not depend on trial N.
+# Validity of trial N is kept as a flag (valid_n) and applied only when the RT means are computed.
+rt_speed_data = trial_level_data %>% 
+  filter(first_trial == 0,
+         prev_correct == 1,
+         prev2_correct == 1,   
+         prev_rt >= 150) %>% 
+  mutate(valid_n = as.integer(correct == 1 & rt >= 150)) %>% 
+  select(participant, rt, correct, valid_n, congruency, prev_congruency, prev_rt)
+
+rt_speed_data %>% 
+  group_by(participant) %>% 
+  summarise(n_pairs = n(), n_valid_n = sum(valid_n))
+```
 ---
 
 ## Descriptive statistics and visualisation
@@ -395,7 +424,223 @@ high_threshold_mcm = max(ev_for_h2$sdtheory)
 print(range_test)
 ```
 
+---
 
+## RT-speed analysis
+
+### Fast / slow tertiles of the previous trial's RT
+
+```{r}
+# Tertiles are computed separately within previous-congruent and previous-incongruent trials of every participant
+# (Weissman et al., 2026), so that previous conflict is varied while previous congruency is held constant.
+assign_speed = function(df, by) {
+  df %>% 
+    group_by(across(all_of(by))) %>% 
+    mutate(q_lo = quantile(prev_rt, 1/3),
+           q_hi = quantile(prev_rt, 2/3),
+           prev_speed = case_when(prev_rt <= q_lo ~ "fast",
+                                  prev_rt >= q_hi ~ "slow",
+                                  TRUE ~ "middle")) %>% 
+    ungroup()
+}
+
+speed_data = assign_speed(rt_speed_data, by = c("participant", "prev_congruency"))
+
+speed_cells = speed_data %>% 
+  filter(valid_n == 1, prev_speed != "middle") %>% 
+  group_by(participant, prev_congruency, prev_speed, congruency) %>% 
+  summarise(mean_rt = mean(rt), mean_prev_rt = mean(prev_rt), n = n(), .groups = "drop")
+
+```
+
+---
+
+### Manipulation check: do the fast and slow tertiles differ in previous-trial RT?
+
+```{r}
+speed_cells %>% 
+  group_by(participant, prev_congruency, prev_speed) %>% 
+  summarise(prev_rt = mean(mean_prev_rt), .groups = "drop") %>% 
+  pivot_wider(names_from = prev_speed, values_from = prev_rt) %>% 
+  group_by(prev_congruency) %>% 
+  summarise(mean_fast = mean(fast), mean_slow = mean(slow),
+            t = unname(t.test(slow, fast, paired = TRUE)$statistic),
+            p = t.test(slow, fast, paired = TRUE)$p.value)
+```
+
+---
+
+### Modulation of the congruency effect (one value per participant and previous congruency)
+
+```{r}
+# modulation = CE after fast previous trials - CE after slow previous trials
+# Positive values = smaller congruency effect after slow (high-conflict) trials = what the conflict account predicts
+get_modulation = function(cells, strata) {
+  cells %>% 
+    pivot_wider(id_cols = c(participant, all_of(strata), prev_speed),
+                names_from = congruency, values_from = mean_rt) %>% 
+    mutate(CE = incongruent - congruent) %>% 
+    pivot_wider(id_cols = c(participant, all_of(strata)),
+                names_from = prev_speed, values_from = CE, names_prefix = "CE_") %>% 
+    mutate(modulation = CE_fast - CE_slow) %>% 
+    filter(!is.na(modulation))
+}
+
+speed_modulation = get_modulation(speed_cells, strata = "prev_congruency")
+
+speed_modulation %>% 
+  group_by(prev_congruency) %>% 
+  summarise(across(c(CE_fast, CE_slow, modulation), mean))
+```
+
+---
+
+### rmANOVA (previous RT tertile x current congruency), separately per previous congruency
+
+```{r}
+run_speed_anova = function(prev_cong) {
+  d = speed_cells %>% 
+    filter(prev_congruency == prev_cong) %>% 
+    mutate(across(c(participant, prev_speed, congruency), factor))
+  summary(aov(mean_rt ~ prev_speed * congruency + Error(participant / (prev_speed * congruency)), data = d))
+}
+
+run_speed_anova("congruent")
+
+run_speed_anova("incongruent")
+```
+
+---
+
+## TOST and Bayes factor on the modulation
+
+### Setting up the two modulation vectors
+
+```{r}
+mod_congruent = speed_modulation %>% 
+  filter(prev_congruency == "congruent") %>% pull(modulation)
+mod_incongruent = speed_modulation %>%
+  filter(prev_congruency == "incongruent") %>% pull(modulation)
+```
+
+---
+
+### TOST
+
+```{r}
+sesoi = 5
+
+# previous trial congruent
+tost_c_lower = t.test(mod_congruent, mu = -sesoi, alternative = "greater")   # H0: modulation <= -5
+tost_c_upper = t.test(mod_congruent, mu = sesoi, alternative = "less")       # H0: modulation >= +5
+
+# previous trial incongruent
+tost_i_lower = t.test(mod_incongruent, mu = -sesoi, alternative = "greater")
+tost_i_upper = t.test(mod_incongruent, mu = sesoi, alternative = "less")
+
+tibble(prev_congruency = c("congruent", "incongruent"),
+       p_lower = c(tost_c_lower$p.value, tost_i_lower$p.value),
+       p_upper = c(tost_c_upper$p.value, tost_i_upper$p.value)) %>% 
+  mutate(p_TOST = pmax(p_lower, p_upper),   # equivalence needs both tests significant
+         equivalent = p_TOST < 0.05)
+```
+
+---
+
+### BF, previous congruent
+
+```{r}
+t_test_speed_cong = t.test(mod_congruent, mu = 0, alternative = "greater")
+
+Bf_H3_cong = old_Bf(sd = t_test_speed_cong$stderr,
+                    obtained = t_test_speed_cong$estimate,
+                    dfdata = t_test_speed_cong$parameter,
+                    meanoftheory = 0,
+                    sdtheory = 30,
+                    dftheory = 10^10,
+                    tail = 1)
+print(Bf_H3_cong) 
+speed_range = seq(from = 0.5, to = 200, by = 0.5)
+range_test_c = t(sapply(speed_range, function(sdi) {
+  bf_val = old_Bf(sd = t_test_speed_cong$stderr,
+                  obtained = t_test_speed_cong$estimate,
+                  dfdata = t_test_speed_cong$parameter,
+                  meanoftheory = 0,
+                  sdtheory = sdi,
+                  dftheory = 10^10,
+                  tail = 1)
+  c(sdtheory = sdi, BF = bf_val)
+}))
+colnames(range_test_c) = c("sdtheory", "BF")
+range_test_c = data.frame(range_test_c)
+
+ev_for_h3_cong = subset(data.frame(range_test), BF > 3) # BF > 3 indicates evidence for the conflict-monitoring account
+low_threshold_mcm = min(ev_for_h3_cong$sdtheory)
+high_threshold_mcm = max(ev_for_h3_cong$sdtheory)
+print(range_test)
+```
+
+---
+
+### BF, previous incongruent
+
+```{r}
+t_test_speed_incong = t.test(mod_incongruent, mu = 0, alternative = "greater")
+
+Bf_H3_incong = old_Bf(sd = t_test_speed_incong$stderr,
+                    obtained = t_test_speed_incong$estimate,
+                    dfdata = t_test_speed_incong$parameter,
+                    meanoftheory = 0,
+                    sdtheory = 30,
+                    dftheory = 10^10,
+                    tail = 1)
+print(Bf_H3_incong)
+
+range_test_i = t(sapply(speed_range, function(sdi) {
+  bf_val = old_Bf(sd = t_test_speed_incong$stderr,
+                  obtained = t_test_speed_incong$estimate,
+                  dfdata = t_test_speed_incong$parameter,
+                  meanoftheory = 0,
+                  sdtheory = sdi,
+                  dftheory = 10^10,
+                  tail = 1)
+  c(sdtheory = sdi, BF = bf_val)
+}))
+colnames(range_test_i) = c("sdtheory", "BF")
+range_test_i = data.frame(range_test_i)
+
+ev_for_h3_incong = subset(data.frame(range_test), BF > 3) # BF > 3 indicates evidence for the conflict-monitoring account. In the case of both congruency type, BF needs to be > 3 to conclude evidence for the conflict monitoring account
+low_threshold_mcm = min(ev_for_h3_incong$sdtheory)
+high_threshold_mcm = max(ev_for_h3_incong$sdtheory)
+print(range_test)
+```
+
+### Plots
+
+```{r}
+speed_plot_df = speed_cells %>% 
+  group_by(prev_congruency, prev_speed, congruency) %>% 
+  summarise(mean = mean(mean_rt), se = sd(mean_rt) / sqrt(n()), .groups = "drop") %>% 
+  mutate(prev_speed = factor(prev_speed, levels = c("fast", "slow")))
+
+ggplot(speed_plot_df, aes(prev_speed, mean, colour = congruency, group = congruency)) +
+  geom_point(size = 3) +
+  geom_path(linewidth = 1.2) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2, linewidth = 1.2) +
+  facet_wrap(~ prev_congruency, labeller = label_both) +
+  labs(title = "RT-speed analysis", x = "Previous-trial RT tertile", y = "Mean reaction time (ms)", colour = "Congruency") +
+  scale_colour_manual(values = c("#DAB1DA", "#341539")) +
+  theme_minimal(base_size = 14)
+
+ggplot(speed_modulation, aes(prev_congruency, modulation)) +
+  annotate("rect", xmin = -Inf, xmax = Inf, ymin = -5, ymax = 5, alpha = 0.15) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_jitter(width = 0.08, height = 0, alpha = 0.6) +
+  stat_summary(fun.data = mean_cl_normal, fun.args = list(conf.int = 0.90), colour = "#341539") +
+  labs(x = "Previous congruency", y = "CE(fast) - CE(slow) (ms)",
+       subtitle = "Grey band = equivalence bounds (+/- 5 ms); mean with 90% CI") +
+  theme_minimal(base_size = 14)
+```
 
 
 
