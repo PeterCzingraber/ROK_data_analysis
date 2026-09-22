@@ -1,7 +1,7 @@
 ---
-title: "ROK_data_analysis"
+title: "ROK_words_analysis"
 author: "Boglarka Ludmany, Peter Czingraber"
-date: "2026-09-16"
+date: "2026-09-22"
 output: html_document
 ---
 
@@ -19,7 +19,7 @@ library(lmerTest)
 ## Importing raw data
 
 ```{r}
-raw_pilot_data = read.csv("inlab_pilot.csv")
+raw_pilot_data = read.csv("rok_words_inlab_pilot.csv")
 ```
 
 ---
