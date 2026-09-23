@@ -115,7 +115,7 @@ write_csv(raw_data,"raw_arrow_data.csv")
 
 ---
 
-## Importing source data
+## Importing raw data
 
 ```{r}
 raw_arrow_data = read.csv("raw_arrow_data.csv")
@@ -126,7 +126,7 @@ raw_arrow_data = read.csv("raw_arrow_data.csv")
 ## Flagging previous trials
 
 ```{r}
-raw_pilot_data = raw_pilot_data %>%
+raw_arrow_data = raw_arrow_data %>%
   mutate(prev_congruency = lag(congruency, n = 1),
          prev_correct = lag(correct, n = 1),
          correct = ifelse(correct == "true", 1, 0),
@@ -134,7 +134,7 @@ raw_pilot_data = raw_pilot_data %>%
          rt = as.numeric(rt))
 
 # Additional previous-trial variables, needed for the RT-speed analysis
-raw_pilot_data = raw_pilot_data %>%
+raw_arrow_data = raw_arrow_data %>%
   mutate(prev_rt = lag(rt, n = 1),
          # accuracy of trial N-2; if N-1 is the first trial of a block, N-2 does not exist in the block -> treated as correct
          prev2_correct = if_else(lag(first_trial, n = 1) == 1, 1, lag(correct, n = 2)))
@@ -145,11 +145,11 @@ raw_pilot_data = raw_pilot_data %>%
 ## Filtering participants with accuracy below 70% 
 
 ```{r}
-accuracy = raw_pilot_data %>%
+accuracy = raw_arrow_data %>%
   group_by(subject_id) %>%
   summarize(all_accuracy = mean(correct, na.rm = TRUE))
 
-raw_pilot_data = raw_pilot_data %>%
+raw_arrow_data = raw_arrow_data %>%
   left_join(accuracy, by = "subject_id") %>%
   filter(all_accuracy > 0.70)
 ```
@@ -160,14 +160,14 @@ raw_pilot_data = raw_pilot_data %>%
 
 ```{r}
 # Trial-level data (all experimental trials of the retained participants); the RT-speed data frame is built from this
-trial_level_data = raw_pilot_data %>%
+trial_level_data = raw_arrow_data %>%
   mutate(time_elapsed = as.numeric(time_elapsed)) %>% 
   group_by(subject_id) %>% 
   mutate(total_time = max(time_elapsed, na.rm = TRUE)) %>% 
   ungroup() %>% 
   filter(total_time <= 2400000)
 
-filtered_pilot_data = trial_level_data %>% 
+filtered_data = trial_level_data %>% 
   filter(correct == 1, prev_correct == 1, rt >= 150, first_trial == 0)
 ```
 
@@ -176,7 +176,7 @@ filtered_pilot_data = trial_level_data %>%
 ## Omitting the remaining unnecessary variables
 
 ```{r}
-processed_pilot_data = filtered_pilot_data %>%
+processed_data = filtered_data %>%
   select(subject_id, rt, correct, prev_correct, congruency, prev_congruency)
 ```
 
@@ -237,7 +237,7 @@ dstats = function(x, na.omit=FALSE){
 ## Descriptive statistics for aggregated RT values
 
 ```{r}
-mean_rt_df = processed_pilot_data %>% 
+mean_rt_df = processed_data %>% 
   group_by(subject_id) %>% 
   summarise(mean_rt_congruent = mean(rt[congruency == "congruent"]),
             mean_rt_incongruent = mean(rt[congruency == "incongruent"]))
@@ -251,7 +251,7 @@ sapply(mean_rt_df[myvars], dstats)
 ## Density plot
 
 ```{r}
-ggplot(processed_pilot_data, aes(rt)) +
+ggplot(processed_data, aes(rt)) +
   geom_density() +
   theme_minimal() +
   labs(title = "RT distribution")
@@ -262,7 +262,7 @@ ggplot(processed_pilot_data, aes(rt)) +
 ## Violinplots for CE
 
 ```{r}
-ce_rt = processed_pilot_data %>%
+ce_rt = processed_data %>%
   group_by(subject_id, congruency) %>%
   summarise(mean_rt = mean(rt), .groups = "drop")
 
@@ -284,7 +284,7 @@ print(violin)
 ```{r}
 # Appropriate data structure for visualizing the CSE
 
-cse_df = processed_pilot_data %>% 
+cse_df = processed_data %>% 
   group_by(subject_id, congruency, prev_congruency) %>% 
   summarise(mean_rt = mean(rt))
 
@@ -356,7 +356,7 @@ sapply(subject_cse[myvars], dstats)
 
 ```{r}
 # Aggregate to one mean RT per participant * condition
-rm_data = processed_pilot_data %>% 
+rm_data = processed_data %>% 
   group_by(subject_id, congruency, prev_congruency) %>% 
   summarise(mean_rt = mean(rt), .groups = "drop") %>% 
   mutate(congruency = factor(congruency, levels = c("congruent", "incongruent")),
