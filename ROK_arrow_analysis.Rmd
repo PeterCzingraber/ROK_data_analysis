@@ -538,23 +538,6 @@ speed_modulation %>%
 
 ---
 
-### rmANOVA (previous RT tertile x current congruency), separately per previous congruency
-
-```{r}
-run_speed_anova = function(prev_cong) {
-  d = speed_cells %>% 
-    filter(prev_congruency == prev_cong) %>% 
-    mutate(across(c(subject_id, prev_speed, congruency), factor))
-  summary(aov(mean_rt ~ prev_speed * congruency + Error(subject_id / (prev_speed * congruency)), data = d))
-}
-
-run_speed_anova("congruent")
-
-run_speed_anova("incongruent")
-```
-
----
-
 ## TOST and Bayes factor on the modulation
 
 ### Setting up the two modulation vectors
