@@ -19,23 +19,48 @@ library(lmerTest)
 ## Importing raw data
 
 ```{r}
-raw_pilot_data = read.csv("rok_words_inlab_pilot.csv")
+source_data = read.csv("word_rok_0922.csv")
 ```
-
----
 
 ## Data cleaning
 
 ```{r}
-demography_data = raw_pilot_data %>%
+source_data = source_data %>%
+  mutate(
+    is_header  = participant == "participant",
+    session    = cumsum(is_header)
+  ) %>%
+  filter(!is_header) %>%
+  mutate(
+    subject_id = paste0("S", str_pad(session, 2, pad = "0"))
+  )
+```
+
+---
+
+## Building a proper subject code
+
+```{r}
+source_data = source_data %>%
+  mutate(
+    subject_id = paste0("S", str_pad(session, 2, pad = "0"))
+  )
+```
+
+---
+
+## Demography data
+
+```{r}
+demography_data = source_data %>%
   filter(trial_type %in% c("survey-html-form", "survey-multi-choice")) %>%
-  select(participant, response) %>%
+  select(subject_id, response) %>%
   mutate(
     gender = str_extract(response, '(?<=[Gg]ender":")[^"]+'),
     age = as.numeric(str_extract(response, '(?<="response":")\\d{1,3}(?=")'))
     ) %>%
   select(-response) %>%
-  group_by(participant) %>%
+  group_by(subject_id) %>%
   summarize(
     age    = age[!is.na(age)][1],
     gender = gender[!is.na(gender)][1],
@@ -47,13 +72,11 @@ demography_data %>%
             n_female = sum(gender == "Nő", na.rm = TRUE))
 ```
 
----
-
 ## Flagging and filtering practice trials 
 
 ```{r}
-raw_pilot_data = raw_pilot_data %>% 
-  group_by(participant) %>% 
+source_data = source_data %>% 
+  group_by(subject_id) %>% 
   mutate(
     block_marker = str_detect(stimulus, regex("blokk\\s+vége", ignore_case = TRUE)) %>% 
       coalesce(FALSE),
@@ -71,8 +94,8 @@ raw_pilot_data = raw_pilot_data %>%
 ## Keeping the necessary variables
 
 ```{r}
-raw_pilot_data = raw_pilot_data %>% 
-  select(participant, rt, correct, congruency, trial_exp, trial_index, task, first_trial, time_elapsed) %>% 
+raw_data = source_data %>% 
+  select(subject_id, rt, correct, congruency, trial_exp, trial_index, task, first_trial, time_elapsed) %>% 
   filter(trial_exp == "experimental" & task == "expTrial")
 # task == "expTrial" only drops non-trial rows (consent, demographics, etc.);
 # trial_exp (from the "blokk vége" marker, computed pre-filter) is what actually separates practice from experimental trials.
@@ -80,10 +103,25 @@ raw_pilot_data = raw_pilot_data %>%
 
 ---
 
+## Source data cleaned, no personal information is retained in the raw data file. This csv is uploaded to github. To reproduce the analysis load the raw_word_data.csv
+
+```{r}
+write_csv(raw_data,"raw_word_data.csv")
+```
+
+---
+
+## Importing raw data
+
+```{r}
+raw_word_data = read.csv("raw_word_data.csv")
+```
+---
+
 ## Flagging previous trials
 
 ```{r}
-raw_pilot_data = raw_pilot_data %>%
+raw_word_data = raw_word_data %>%
   mutate(prev_congruency = lag(congruency, n = 1),
          prev_correct = lag(correct, n = 1),
          correct = ifelse(correct == "true", 1, 0),
@@ -91,7 +129,7 @@ raw_pilot_data = raw_pilot_data %>%
          rt = as.numeric(rt))
 
 # Additional previous-trial variables, needed for the RT-speed analysis
-raw_pilot_data = raw_pilot_data %>%
+raw_word_data = raw_word_data %>%
   mutate(prev_rt = lag(rt, n = 1),
          # accuracy of trial N-2; if N-1 is the first trial of a block, N-2 does not exist in the block -> treated as correct
          prev2_correct = if_else(lag(first_trial, n = 1) == 1, 1, lag(correct, n = 2)))
@@ -102,12 +140,12 @@ raw_pilot_data = raw_pilot_data %>%
 ## Filtering participants with accuracy below 70% 
 
 ```{r}
-accuracy = raw_pilot_data %>%
-  group_by(participant) %>%
+accuracy = raw_word_data %>%
+  group_by(subject_id) %>%
   summarize(all_accuracy = mean(correct, na.rm = TRUE))
 
-raw_pilot_data = raw_pilot_data %>%
-  left_join(accuracy, by = "participant") %>%
+raw_word_data = raw_word_data %>%
+  left_join(accuracy, by = "subject_id") %>%
   filter(all_accuracy > 0.70)
 ```
 
@@ -117,14 +155,14 @@ raw_pilot_data = raw_pilot_data %>%
 
 ```{r}
 # Trial-level data (all experimental trials of the retained participants); the RT-speed data frame is built from this
-trial_level_data = raw_pilot_data %>%
+trial_level_data = raw_word_data %>%
   mutate(time_elapsed = as.numeric(time_elapsed)) %>% 
-  group_by(participant) %>% 
+  group_by(subject_id) %>% 
   mutate(total_time = max(time_elapsed, na.rm = TRUE)) %>% 
   ungroup() %>% 
   filter(total_time <= 2400000)
 
-filtered_pilot_data = trial_level_data %>% 
+filtered_data = trial_level_data %>% 
   filter(correct == 1, prev_correct == 1, rt >= 150, first_trial == 0)
 ```
 
@@ -133,8 +171,8 @@ filtered_pilot_data = trial_level_data %>%
 ## Omitting the remaining unnecessary variables
 
 ```{r}
-processed_pilot_data = filtered_pilot_data %>%
-  select(participant, rt, correct, prev_correct, congruency, prev_congruency)
+processed_data = filtered_data %>%
+  select(subject_id, rt, correct, prev_correct, congruency, prev_congruency)
 ```
 
 ---
@@ -152,10 +190,10 @@ rt_speed_data = trial_level_data %>%
          prev2_correct == 1,   
          prev_rt >= 150) %>% 
   mutate(valid_n = as.integer(correct == 1 & rt >= 150)) %>% 
-  select(participant, rt, correct, valid_n, congruency, prev_congruency, prev_rt)
+  select(subject_id, rt, correct, valid_n, congruency, prev_congruency, prev_rt)
 
 rt_speed_data %>% 
-  group_by(participant) %>% 
+  group_by(subject_id) %>% 
   summarise(n_pairs = n(), n_valid_n = sum(valid_n))
 ```
 ---
@@ -194,8 +232,8 @@ dstats = function(x, na.omit=FALSE){
 ## Descriptive statistics for aggregated RT values
 
 ```{r}
-mean_rt_df = processed_pilot_data %>% 
-  group_by(participant) %>% 
+mean_rt_df = processed_data %>% 
+  group_by(subject_id) %>% 
   summarise(mean_rt_congruent = mean(rt[congruency == "congruent"]),
             mean_rt_incongruent = mean(rt[congruency == "incongruent"]))
 
@@ -208,7 +246,7 @@ sapply(mean_rt_df[myvars], dstats)
 ## Density plot
 
 ```{r}
-ggplot(processed_pilot_data, aes(rt)) +
+ggplot(processed_data, aes(rt)) +
   geom_density() +
   theme_minimal() +
   labs(title = "RT distribution")
@@ -219,8 +257,8 @@ ggplot(processed_pilot_data, aes(rt)) +
 ## Violinplots for CE
 
 ```{r}
-ce_rt = processed_pilot_data %>%
-  group_by(participant, congruency) %>%
+ce_rt = processed_data %>%
+  group_by(subject_id, congruency) %>%
   summarise(mean_rt = mean(rt), .groups = "drop")
 
 violin = ggplot(ce_rt, aes(congruency, mean_rt, fill = congruency)) +
@@ -241,8 +279,8 @@ print(violin)
 ```{r}
 # Appropriate data structure for visualizing the CSE
 
-cse_df = processed_pilot_data %>% 
-  group_by(participant, congruency, prev_congruency) %>% 
+cse_df = processed_data %>% 
+  group_by(subject_id, congruency, prev_congruency) %>% 
   summarise(mean_rt = mean(rt))
 
 cse_descriptive_df = cse_df %>% 
@@ -313,19 +351,19 @@ sapply(subject_cse[myvars], dstats)
 
 ```{r}
 # Aggregate to one mean RT per participant * condition
-rm_data = processed_pilot_data %>% 
-  group_by(participant, congruency, prev_congruency) %>% 
+rm_data = processed_data %>% 
+  group_by(subject_id, congruency, prev_congruency) %>% 
   summarise(mean_rt = mean(rt), .groups = "drop") %>% 
   mutate(congruency = factor(congruency, levels = c("congruent", "incongruent")),
          prev_congruency = factor(prev_congruency, levels = c("congruent", "incongruent")),
-         participant = factor(participant))
+         subject_id = factor(subject_id))
 
 # Sum-to-zero contrast coding. congruent = 0.5, incongruent = -0.5
 contrasts(rm_data$congruency) = matrix(c(0.5, -0.5), nrow = 2, dimnames = list(NULL, "c_vs_i"))
 contrasts(rm_data$prev_congruency) = matrix(c(0.5, -0.5), nrow = 2, dimnames = list(NULL, "c_vs_i"))
 
 # repeated-measures ANOVA
-rm_anova = aov(mean_rt ~ congruency * prev_congruency + Error(participant / (congruency * prev_congruency)),
+rm_anova = aov(mean_rt ~ congruency * prev_congruency + Error(subject_id / (congruency * prev_congruency)),
                data = rm_data)
 summary(rm_anova)
 ```
@@ -337,7 +375,7 @@ summary(rm_anova)
 ```{r}
 # main effect of current congruency (collapsed across prev_congruency)
 main_effect_df = rm_data %>%
-  group_by(participant, congruency) %>%
+  group_by(subject_id, congruency) %>%
   summarise(rt = mean(mean_rt), .groups = "drop") %>%
   pivot_wider(names_from = congruency, values_from = rt)
 
@@ -444,11 +482,11 @@ assign_speed = function(df, by) {
     ungroup()
 }
 
-speed_data = assign_speed(rt_speed_data, by = c("participant", "prev_congruency"))
+speed_data = assign_speed(rt_speed_data, by = c("subject_id", "prev_congruency"))
 
 speed_cells = speed_data %>% 
   filter(valid_n == 1, prev_speed != "middle") %>% 
-  group_by(participant, prev_congruency, prev_speed, congruency) %>% 
+  group_by(subject_id, prev_congruency, prev_speed, congruency) %>% 
   summarise(mean_rt = mean(rt), mean_prev_rt = mean(prev_rt), n = n(), .groups = "drop")
 
 ```
@@ -459,7 +497,7 @@ speed_cells = speed_data %>%
 
 ```{r}
 speed_cells %>% 
-  group_by(participant, prev_congruency, prev_speed) %>% 
+  group_by(subject_id, prev_congruency, prev_speed) %>% 
   summarise(prev_rt = mean(mean_prev_rt), .groups = "drop") %>% 
   pivot_wider(names_from = prev_speed, values_from = prev_rt) %>% 
   group_by(prev_congruency) %>% 
@@ -477,10 +515,10 @@ speed_cells %>%
 # Positive values = smaller congruency effect after slow (high-conflict) trials = what the conflict account predicts
 get_modulation = function(cells, strata) {
   cells %>% 
-    pivot_wider(id_cols = c(participant, all_of(strata), prev_speed),
+    pivot_wider(id_cols = c(subject_id, all_of(strata), prev_speed),
                 names_from = congruency, values_from = mean_rt) %>% 
     mutate(CE = incongruent - congruent) %>% 
-    pivot_wider(id_cols = c(participant, all_of(strata)),
+    pivot_wider(id_cols = c(subject_id, all_of(strata)),
                 names_from = prev_speed, values_from = CE, names_prefix = "CE_") %>% 
     mutate(modulation = CE_fast - CE_slow) %>% 
     filter(!is.na(modulation))
@@ -501,8 +539,8 @@ speed_modulation %>%
 run_speed_anova = function(prev_cong) {
   d = speed_cells %>% 
     filter(prev_congruency == prev_cong) %>% 
-    mutate(across(c(participant, prev_speed, congruency), factor))
-  summary(aov(mean_rt ~ prev_speed * congruency + Error(participant / (prev_speed * congruency)), data = d))
+    mutate(across(c(subject_id, prev_speed, congruency), factor))
+  summary(aov(mean_rt ~ prev_speed * congruency + Error(subject_id / (prev_speed * congruency)), data = d))
 }
 
 run_speed_anova("congruent")
