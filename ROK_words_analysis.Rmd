@@ -12,6 +12,7 @@ library(tidyverse)
 library(dplyr)
 library(tidyr)
 library(lmerTest)
+library(effectsize)
 ```
 
 ---
@@ -69,7 +70,8 @@ demography_data = source_data %>%
 
 demography_data %>%
   summarise(mean_age = mean(age, na.rm = TRUE),
-            n_female = sum(gender == "Nő", na.rm = TRUE))
+            n_female = sum(gender == "Nő", na.rm = TRUE),
+            sd_age = sd(age))
 ```
 
 ## Flagging and filtering practice trials 
@@ -78,9 +80,9 @@ demography_data %>%
 source_data = source_data %>% 
   group_by(subject_id) %>% 
   mutate(
-    block_marker = str_detect(stimulus, regex("blokk\\s+vége", ignore_case = TRUE)) %>% 
+    block_marker = str_detect(stimulus, regex("blokk\\s+vége|end\\s+of\\s+practice\\s+block", ignore_case = TRUE)) %>% 
       coalesce(FALSE),
-    block_start  = str_detect(stimulus, regex("Blokk\\s+kezdődik", ignore_case = TRUE)) %>% 
+    block_start  = str_detect(stimulus, regex("Blokk\\s+kezdődik|Block\\s+\\d+\\s+begins", ignore_case = TRUE)) %>% 
       coalesce(FALSE),
     first_trial  = as.integer(lag(block_start, n = 2, default = FALSE)),
     marker_seen  = cummax(block_marker),
@@ -366,6 +368,8 @@ contrasts(rm_data$prev_congruency) = matrix(c(0.5, -0.5), nrow = 2, dimnames = l
 rm_anova = aov(mean_rt ~ congruency * prev_congruency + Error(subject_id / (congruency * prev_congruency)),
                data = rm_data)
 summary(rm_anova)
+# effect size
+eta_squared(rm_anova, partial = TRUE)
 ```
 
 ---
@@ -663,6 +667,74 @@ ggplot(speed_modulation, aes(prev_congruency, modulation)) +
   theme_minimal(base_size = 14)
 ```
 
+---
+
+## How many participants / trials did we exclude? (standard CSE analysis)
+
+```{r}
+raw_word_rows = nrow(raw_word_data)
+
+filtered_invalid = raw_word_data %>%
+  mutate(time_elapsed = as.numeric(time_elapsed)) %>% 
+  group_by(subject_id) %>% 
+  mutate(total_time = max(time_elapsed, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  filter(total_time >= 2400000 | correct == 0 | prev_correct == 0 | rt <= 150 | first_trial != 0) %>%
+  select(subject_id, rt, correct, congruency, prev_congruency, prev_rt)
+
+filtered_invalid_rows = nrow(filtered_invalid)
+
+filtered_invalid_perc = (filtered_invalid_rows / raw_word_rows) * 100
+filtered_invalid_rows
+filtered_invalid_perc
+```
+
+
+```{r}
+# Too slow
+slow_trials = raw_word_data %>% 
+  mutate(time_elapsed = as.numeric(time_elapsed)) %>% 
+  group_by(subject_id) %>% 
+  mutate(total_time = max(time_elapsed, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  filter(total_time >= 2400000)
+
+n_slow = n_distinct(slow_trials$subject_id)
+
+# Inaccurate
+inaccurate = accuracy %>% 
+  filter(all_accuracy < 0.70)
+n_inaccurate = n_distinct(inaccurate$subject_id)
+
+n_slow
+n_inaccurate
+```
+
+---
+
+### How many trials did we exclude before the RT-matching analysis?
+
+```{r}
+speed_final = speed_data %>% 
+  filter(valid_n == 1, prev_speed != "middle")
+```
+
+```{r}
+raw_word_data_orig = read.csv("raw_word_data.csv")
+
+n_trials_total     = nrow(raw_word_data_orig)
+n_trials_final     = nrow(speed_final)
+n_trials_excluded  = n_trials_total - n_trials_final
+pct_trials_excluded = n_trials_excluded / n_trials_total * 100
+
+cat(
+  "Total trials:   ", n_trials_total, "\n",
+  "Final trials:   ", n_trials_final, "\n",
+  "Excluded trials:", n_trials_excluded, "\n",
+  "Pct excluded:   ", round(pct_trials_excluded, 2), "%\n",
+  sep = ""
+)
+```
 
 
 
