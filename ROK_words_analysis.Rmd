@@ -445,7 +445,7 @@ Bf_h2 = old_Bf(sd = t_test_CSE$stderr,
    tail = 1)
 print(Bf_h2)
 
-h2_range = seq(from = 0.5,to = 200,by = 0.5) 
+h2_range = seq(from = 0.5, to = 200, by = 0.5) 
 range_test = t(sapply(h2_range, function(sdi) {
   bf_val = old_Bf(
     sd = t_test_CSE$stderr,
@@ -602,7 +602,7 @@ range_test_c = data.frame(range_test_c)
 ev_for_h3_cong = subset(data.frame(range_test), BF > 3) # BF > 3 indicates evidence for the conflict-monitoring account
 low_threshold_mcm = min(ev_for_h3_cong$sdtheory)
 high_threshold_mcm = max(ev_for_h3_cong$sdtheory)
-print(range_test)
+print(range_test_c)
 ```
 
 ---
@@ -637,7 +637,7 @@ range_test_i = data.frame(range_test_i)
 ev_for_h3_incong = subset(data.frame(range_test), BF > 3) # BF > 3 indicates evidence for the conflict-monitoring account. In the case of both congruency type, BF needs to be > 3 to conclude evidence for the conflict monitoring account
 low_threshold_mcm = min(ev_for_h3_incong$sdtheory)
 high_threshold_mcm = max(ev_for_h3_incong$sdtheory)
-print(range_test)
+print(range_test_i)
 ```
 
 ### Plots
