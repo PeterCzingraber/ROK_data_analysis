@@ -20,7 +20,7 @@ library(effectsize)
 ## Importing source data
 
 ```{r}
-source_data = read.csv("arrow_rok_0922.csv")
+data = read.csv("arrow_rok_0922.csv")
 ```
 
 ---
@@ -28,23 +28,12 @@ source_data = read.csv("arrow_rok_0922.csv")
 ## Data cleaning
 
 ```{r}
-source_data = source_data %>%
+source_data = data %>%
   mutate(
     is_header  = participant == "participant",
     session    = cumsum(is_header)
   ) %>%
   filter(!is_header) %>%
-  mutate(
-    subject_id = paste0("S", str_pad(session, 2, pad = "0"))
-  )
-```
-
----
-
-## Building a proper subject code
-
-```{r}
-source_data = source_data %>%
   mutate(
     subject_id = paste0("S", str_pad(session, 2, pad = "0"))
   )
@@ -266,16 +255,23 @@ ggplot(processed_data, aes(rt)) +
 ```{r}
 ce_rt = processed_data %>%
   group_by(subject_id, congruency) %>%
-  summarise(mean_rt = mean(rt), .groups = "drop")
+  dplyr::summarise(mean_rt = mean(rt), .groups = "drop") %>%
+  mutate(congruency = factor(congruency,
+                             levels = c("congruent", "incongruent"),
+                             labels = c("Congruent", "Incongruent")))
 
 violin = ggplot(ce_rt, aes(congruency, mean_rt, fill = congruency)) +
-  geom_violin(trim = TRUE, bounds = c(0, Inf), width = 0.5) +
-  geom_boxplot(width = 0.1, colour = c("black", "white"), outlier.shape = NA) +
-  labs(title = "Congruency Effect", x = "Congruency", y = "Mean reaction time (ms)") +
-  papaja::theme_apa(base_family = "Times") +
-  theme(legend.position = "none") +
-  scale_fill_manual(values = c("congruent" = "#DAB1DA", "incongruent" = "#341539"))
-#ggsave("ce_violin.png", plot = violin, width = 16, height = 9, units = "cm", dpi = 320)
+  geom_violin(trim = TRUE, bounds = c(0, Inf), width = 0.6,
+              colour = "black", linewidth = 0.5) +
+  geom_boxplot(width = 0.12, fill = "white", colour = "black",
+               outlier.shape = NA, linewidth = 0.5) +
+  scale_fill_manual(values = c("Congruent" = "lightgrey", "Incongruent" = "grey40")) +
+  labs(x = "Congruency", y = "Mean reaction time (ms)") +
+  papaja::theme_apa(base_family = "Arial") +
+  theme(legend.position = "none")
+
+ggsave("ce_violin.png", plot = violin, width = 16, height = 10, units = "cm", dpi = 320,
+       device = ragg::agg_png)
 print(violin)
 ```
 
@@ -302,7 +298,9 @@ wide_df = cse_df %>%
               values_from = mean_rt)
 
 subject_cse = wide_df %>% 
-  mutate(CSE = (congruent_incongruent - congruent_congruent) - (incongruent_incongruent - incongruent_congruent))
+  mutate(CE_after_cong   = congruent_incongruent   - congruent_congruent,
+         CE_after_incong = incongruent_incongruent - incongruent_congruent,
+         CSE             = CE_after_cong - CE_after_incong)
 
 ggplot(subject_cse, aes(CSE)) +
   geom_density(fill = "#011526", alpha = 0.25) +
@@ -324,24 +322,35 @@ ggplot(subject_cse, aes(CSE)) +
 ## CSE plot
 
 ```{r}
-cse_plot = ggplot(cse_descriptive_df, aes(prev_congruency, mean, colour = congruency, group = congruency)) +
-  geom_point(size = 3) +
-  geom_path(linewidth = 1.2) +
-  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2, linewidth = 1.2) +
-                      labs(
-                        title = "Congruency-sequence Effect",
-                       x = "Previous Congruency",
-                       y = "Mean reaction time (ms)",
-                       colour = "Congruency") + 
-  scale_colour_manual(values = c("#DAB1DA", "#341539")) +
-  theme_minimal(base_size = 14) +
-  theme(legend.position = "right",
-                        plot.title = element_text(hjust = 0.5, face = "bold"),
-                        panel.grid = element_blank(),
-                        axis.line = element_line(color = "grey", linewidth = 1))
-#ggsave("overall_cse_plot.png", plot = cse_plot, width = 16, height = 9, units = "cm", dpi = 320)
+cse_summary = cse_descriptive_df %>%
+  ungroup() %>%
+  mutate(across(c(prev_congruency, congruency),
+                ~ factor(.x, levels = c("congruent", "incongruent"),
+                         labels = c("Congruent", "Incongruent"))))
+
+pd = position_dodge(width = 0.1)
+
+cse_plot = ggplot(cse_summary,
+                   aes(prev_congruency, mean,
+                       shape = congruency, linetype = congruency, group = congruency)) +
+  geom_line(position = pd, linewidth = 0.6, colour = "black") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se),
+                width = 0.08, linewidth = 0.5, position = pd, colour = "black") +
+  geom_point(position = pd, size = 2.5, colour = "black") +
+  scale_shape_manual(values = c("Congruent" = 16, "Incongruent" = 17)) +
+  scale_linetype_manual(values = c("Congruent" = "solid", "Incongruent" = "dashed")) +
+  labs(x = "Previous-trial congruency",
+       y = "Mean reaction time (ms)",
+       shape = "Current-Trial\nCongruency",
+       linetype = "Current-Trial\nCongruency") +
+  papaja::theme_apa(base_family = "Arial") +
+  theme(legend.position = "right")
+
+ggsave("cse_plot.png", plot = cse_plot, width = 16, height = 9, units = "cm", dpi = 320,
+       device = ragg::agg_png)
 print(cse_plot)
 ```
+
 
 ---
 
@@ -645,7 +654,9 @@ high_threshold_mcm = max(ev_for_h3_incong$sdtheory)
 print(range_test)
 ```
 
-### Plots
+---
+
+### Plots - RT speed
 
 ```{r}
 speed_plot_df = speed_cells %>% 
@@ -653,23 +664,236 @@ speed_plot_df = speed_cells %>%
   summarise(mean = mean(mean_rt), se = sd(mean_rt) / sqrt(n()), .groups = "drop") %>% 
   mutate(prev_speed = factor(prev_speed, levels = c("fast", "slow")))
 
-ggplot(speed_plot_df, aes(prev_speed, mean, colour = congruency, group = congruency)) +
-  geom_point(size = 3) +
-  geom_path(linewidth = 1.2) +
-  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2, linewidth = 1.2) +
-  facet_wrap(~ prev_congruency, labeller = label_both) +
-  labs(title = "RT-speed analysis", x = "Previous-trial RT tertile", y = "Mean reaction time (ms)", colour = "Congruency") +
-  scale_colour_manual(values = c("#DAB1DA", "#341539")) +
-  theme_minimal(base_size = 14)
+speed_summary = speed_plot_df %>%
+  ungroup() %>%
+  mutate(prev_speed = factor(prev_speed, levels = c("fast", "slow"),
+                             labels = c("Fast", "Slow")),
+         congruency = factor(congruency, levels = c("congruent", "incongruent"),
+                             labels = c("Congruent", "Incongruent")),
+         prev_congruency = factor(prev_congruency, levels = c("congruent", "incongruent"),
+                                  labels = c("Congruent", "Incongruent")))
 
-ggplot(speed_modulation, aes(prev_congruency, modulation)) +
-  annotate("rect", xmin = -Inf, xmax = Inf, ymin = -5, ymax = 5, alpha = 0.15) +
-  geom_hline(yintercept = 0, linetype = 2) +
-  geom_jitter(width = 0.08, height = 0, alpha = 0.6) +
-  stat_summary(fun.data = mean_cl_normal, fun.args = list(conf.int = 0.90), colour = "#341539") +
-  labs(x = "Previous congruency", y = "CE(fast) - CE(slow) (ms)",
-       subtitle = "Grey band = equivalence bounds (+/- 5 ms); mean with 90% CI") +
-  theme_minimal(base_size = 14)
+pd = position_dodge(width = 0.1)
+
+speed_plot = ggplot(speed_summary,
+                     aes(prev_speed, mean,
+                         shape = congruency, linetype = congruency, group = congruency)) +
+  geom_line(position = pd, linewidth = 0.6, colour = "black") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se),
+                width = 0.08, linewidth = 0.5, position = pd, colour = "black") +
+  geom_point(position = pd, size = 2.5, colour = "black") +
+  facet_wrap(~ prev_congruency,
+             labeller = labeller(prev_congruency = function(x) paste("Previous trial:", tolower(x)))) +
+  scale_shape_manual(values = c("Congruent" = 16, "Incongruent" = 17)) +
+  scale_linetype_manual(values = c("Congruent" = "solid", "Incongruent" = "dashed")) +
+  labs(x = "Previous-trial RT tertile",
+       y = "Mean reaction time (ms)",
+       shape = "Current-Trial\nCongruency",
+       linetype = "Current-Trial\nCongruency") +
+  papaja::theme_apa(base_family = "Arial") +
+  theme(legend.position = "right")
+
+ggsave("speed_plot.png", plot = speed_plot, width = 18, height = 10, units = "cm",
+       dpi = 320, device = ragg::agg_png)
+print(speed_plot)
+```
+
+---
+
+## RT-matching
+### Step 1: matching function (one participant at a time)
+
+```{r}
+# Goal: pick a subset of previous-congruent and previous-incongruent trials (N-1) with nearly identical prev_rt distributions.
+match_prev_rt = function(df, caliper = 5) {
+  cong_idx = sample(which(df$prev_congruency == "congruent"))      
+  inc_idx  = which(df$prev_congruency == "incongruent")
+  pick_longest = sample(rep(c(TRUE, FALSE), length.out = length(cong_idx)))  # half "longest", half "shortest"
+
+  used    = rep(FALSE, nrow(df))
+  pair_id = rep(NA_integer_, nrow(df))
+
+  # this loop is over trials within a participant, not over participants.
+  for (k in seq_along(cong_idx)) {
+    ci   = cong_idx[k]
+    cand = inc_idx[!used[inc_idx] & abs(df$prev_rt[inc_idx] - df$prev_rt[ci]) <= caliper]
+    if (length(cand) == 0) next
+    chosen = if (pick_longest[k]) cand[which.max(df$prev_rt[cand])] else cand[which.min(df$prev_rt[cand])]
+    used[chosen]  = TRUE
+    pair_id[ci]     = k
+    pair_id[chosen] = k
+  }
+
+  df %>%
+    mutate(pair_id = pair_id) %>%
+    filter(!is.na(pair_id))
+}
+```
+
+---
+
+### Step 2: apply it to every participant
+
+```{r}
+set.seed(110)
+
+matched_data = rt_speed_data %>%
+  group_by(subject_id) %>%
+  group_modify(~ match_prev_rt(.x, caliper = 5)) %>%
+  ungroup()
+
+# How many matched pairs / trials per participant?
+matched_data %>%
+  group_by(subject_id) %>%
+  summarise(n_pairs = n_distinct(pair_id), n_trials = n(), n_valid_n = sum(valid_n), .groups = "drop")
+```
+
+---
+
+### Step 3: manipulation check - did the matching equate previous-trial RT?
+
+```{r}
+# the two matched congruency type should not differ in mean RT
+match_check = matched_data %>%
+  group_by(subject_id, prev_congruency) %>%
+  summarise(mean_prev_rt = mean(prev_rt), .groups = "drop") %>%
+  pivot_wider(names_from = prev_congruency, values_from = mean_prev_rt)
+
+match_check %>% summarise(mean_congruent = mean(congruent), mean_incongruent = mean(incongruent))
+```
+
+---
+
+### Step 4: CSE in the matched data
+
+```{r}
+matched_cells = matched_data %>%
+  filter(valid_n == 1) %>%
+  group_by(subject_id, prev_congruency, congruency) %>%
+  summarise(mean_rt = mean(rt), n = n(), .groups = "drop")
+
+matched_cse = matched_cells %>%
+  pivot_wider(id_cols = subject_id, names_from = c(prev_congruency, congruency), values_from = mean_rt) %>%
+  mutate(CE_after_cong = congruent_incongruent - congruent_congruent,
+         CE_after_incong = incongruent_incongruent - incongruent_congruent,
+         CSE = CE_after_cong - CE_after_incong)
+
+matched_cse %>% summarise(across(c(CE_after_cong, CE_after_incong, CSE), mean))
+
+# Fig. 3
+table3 = bind_rows("Full data" = subject_cse %>% 
+    ungroup() %>% 
+    summarise(across(c(CE_after_cong, CE_after_incong, CSE), mean)),
+  "RT-matched data" = matched_cse %>% 
+    ungroup() %>% 
+    summarise(across(c(CE_after_cong, CE_after_incong, CSE), mean)),
+  .id = "data") %>% 
+  mutate(across(where(is.numeric), ~ round(.x, 2)))
+
+print(table3)
+```
+
+---
+
+### Step 5: rmANOVA (same model as the full-data CSE) and tests on the matched CSE
+
+```{r}
+rm_matched = matched_cells %>%
+  mutate(congruency = factor(congruency, levels = c("congruent", "incongruent")),
+         prev_congruency = factor(prev_congruency, levels = c("congruent", "incongruent")),
+         subject_id = factor(subject_id))
+
+contrasts(rm_matched$congruency) = matrix(c(0.5, -0.5), nrow = 2, dimnames = list(NULL, "c_vs_i"))
+contrasts(rm_matched$prev_congruency) = matrix(c(0.5, -0.5), nrow = 2, dimnames = list(NULL, "c_vs_i"))
+
+rm_anova_matched = aov(mean_rt ~ congruency * prev_congruency + Error(subject_id / (congruency * prev_congruency)),
+                       data = rm_matched)
+summary(rm_anova_matched)
+eta_squared(rm_anova_matched, partial = TRUE)
+
+# Directional test of the matched CSE (same as the full-data CSE test)
+t_test_CSE_matched = t.test(matched_cse$CSE, mu = 0, alternative = "greater")
+t_test_CSE_matched
+```
+
+---
+
+### Step 6: Bayes factor (presence of a CSE) and TOST (absence of a CSE)
+
+```{r}
+# Congruency account predicts the CSE SURVIVES matching -> BF for H1 (CSE > 0), prior as in the full-data CSE analysis
+Bf_matched = old_Bf(sd = t_test_CSE_matched$stderr,
+                    obtained = t_test_CSE_matched$estimate,
+                    dfdata = t_test_CSE_matched$parameter,
+                    meanoftheory = 0,
+                    sdtheory = 30,
+                    dftheory = 10^10,
+                    tail = 1)
+print(Bf_matched)
+
+matched_range = seq(from = 0.5, to = 200, by = 0.5)
+range_matched = t(sapply(matched_range, function(sdi) {
+  bf_val = old_Bf(sd = t_test_CSE_matched$stderr,
+                  obtained = t_test_CSE_matched$estimate,
+                  dfdata = t_test_CSE_matched$parameter,
+                  meanoftheory = 0,
+                  sdtheory = sdi,
+                  dftheory = 10^10,
+                  tail = 1)
+  c(sdtheory = sdi, BF = bf_val)
+}))
+range_matched = data.frame(range_matched)
+colnames(range_matched) = c("sdtheory", "BF")
+
+ev_matched = subset(range_matched, BF > 3)
+low_threshold_mcm = min(ev_matched$sdtheory)
+high_threshold_mcm = max(ev_matched$sdtheory)
+print(range_matched)
+
+# Conflict account predicts the CSE VANISHES -> equivalence test against +/- 5 ms
+sesoi = 5
+tost_m_lower = t.test(matched_cse$CSE, mu = -sesoi, alternative = "greater")
+tost_m_upper = t.test(matched_cse$CSE, mu = sesoi, alternative = "less")
+tibble(p_lower = tost_m_lower$p.value, p_upper = tost_m_upper$p.value,
+       p_TOST = max(tost_m_lower$p.value, tost_m_upper$p.value),
+       equivalent = max(tost_m_lower$p.value, tost_m_upper$p.value) < 0.05)
+```
+
+---
+
+### Plot - RT match
+
+```{r}
+matched_plot_df = matched_cells %>%
+  group_by(prev_congruency, congruency) %>%
+  summarise(mean = mean(mean_rt),
+                   se   = sd(mean_rt) / sqrt(n()),
+                   .groups = "drop") %>%
+  mutate(across(c(prev_congruency, congruency),
+                ~ factor(.x, levels = c("congruent", "incongruent"),
+                         labels = c("Congruent", "Incongruent"))))
+
+pd = position_dodge(width = 0.1)
+
+matched_plot = ggplot(matched_plot_df,
+                       aes(prev_congruency, mean,
+                           shape = congruency, linetype = congruency, group = congruency)) +
+  geom_line(position = pd, linewidth = 0.6, colour = "black") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se),
+                width = 0.08, linewidth = 0.5, position = pd, colour = "black") +
+  geom_point(position = pd, size = 2.5, colour = "black") +
+  scale_shape_manual(values = c("Congruent" = 16, "Incongruent" = 17)) +
+  scale_linetype_manual(values = c("Congruent" = "solid", "Incongruent" = "dashed")) +
+  labs(x = "Previous-trial congruency",
+       y = "Mean reaction time (ms)",
+       shape = "Current-Trial\nCongruency",
+       linetype = "Current-Trial\nCongruency") +
+  papaja::theme_apa(base_family = "Arial") +
+  theme(legend.position = "right")
+
+ggsave("matched_plot.png", plot = matched_plot, width = 16, height = 9, units = "cm", dpi = 320, 
+       device = ragg::agg_png)
+print(matched_plot)
 ```
 
 ---
@@ -717,7 +941,7 @@ n_inaccurate
 
 ---
 
-### How many trials did we exclude before the RT-matching analysis?
+### How many trials did we exclude before the RT-speed analysis?
 
 ```{r}
 speed_final = speed_data %>% 
@@ -741,7 +965,31 @@ cat(
 )
 ```
 
+---
 
+### How many trials did we exclude before the RT-matching analysis?
+
+```{r}
+matched_final = matched_data %>% 
+  filter(valid_n == 1)
+```
+
+```{r}
+raw_arrow_data_orig = read.csv("raw_arrow_data.csv")
+
+n_trials_total     = nrow(raw_arrow_data_orig)
+n_trials_final     = nrow(matched_final)
+n_trials_excluded  = n_trials_total - n_trials_final
+pct_trials_excluded = n_trials_excluded / n_trials_total * 100
+
+cat(
+  "Total trials:   ", n_trials_total, "\n",
+  "Final trials:   ", n_trials_final, "\n",
+  "Excluded trials:", n_trials_excluded, "\n",
+  "Pct excluded:   ", round(pct_trials_excluded, 2), "%\n",
+  sep = ""
+)
+```
 
 
 

@@ -1,6 +1,6 @@
 # ROK_data_analysis
 
-Analysis code for the ROK project, a preregistered study of the congruency sequence effect (CSE) and its modulation by previous-trial response speed, run in two stimulus versions (arrow and word).
+Analysis code for the ROK project, a preregistered study of the congruency sequence effect (CSE) and its modulation by previous-trial response speed, and RT-matching run in two stimulus versions (arrow and word).
 
 ## Repository structure
 
@@ -23,6 +23,7 @@ Each `.Rmd` covers the same pipeline for its task version:
 5. **Descriptive statistics & plots**: RT density, congruency-effect violin plots, participant-level CSE distribution.
 6. **Confirmatory tests**: repeated-measures ANOVA on RT (congruency × previous congruency), paired t-tests for the main congruency effect (H1) and the CSE (H2), each followed by a Dienes Bayes factor with a robustness range.
 7. **RT-speed analysis**: previous-trial RT split into fast/slow tertiles (within participant and previous congruency), manipulation check, CSE modulation (fast vs. slow), TOST + Bayes factor tests against a 5 ms equivalence bound (H3), following Weissman et al. (2026).
+8. **RT-matching analysis**: previous-trial RT was controlled for, and current trial RT is dependent only on previous trial congruency. We matched previous-congruent and previous-incongruent trials on previous-trial RT within each participant.
 
 ## Reproducing the analysis
 
